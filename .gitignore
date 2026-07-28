@@ -1,0 +1,26 @@
+# 依赖/构建产物
+node_modules/
+.ruff_cache/
+
+# 运行时状态与临时诊断产物（不属于流水线源码，体积大/含临时数据）
+pi-diagnostics/
+pi-diagnostics-backup-*/
+pi-diagnostics-*.zip
+pi-diagnostics-final-*.zip
+
+# 大型安装包
+*.exe
+
+# spoq 运行时产物：状态快照/备份/遥测日志，不应作为源码版本控制
+.pi/spoq-state.json.backup
+.pi/spoq-telemetry.jsonl
+
+# 编辑器/系统杂项
+~
+*.log
+
+# 环境变量/密钥（以防万一）
+.env
+.env.*
+*.pem
+*.key

@@ -1,0 +1,13 @@
+{
+  "persistSession": true,
+  "maxConcurrency": 4,
+  "defaultMaxTurns": 80,
+  "graceTurns": 5,
+  "defaultJoinMode": "smart",
+  "widgetMode": "all",
+  "fleetViewEnabled": true,
+  "schedulingEnabled": true,
+  "scopeModelsEnabled": true,
+  "disableDefaultAgents": false,
+  "toolDescriptionMode": "full"
+}

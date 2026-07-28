@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "skills": {
+    "wechatide-skill": {
+      "name": "微信开发者工具 Skills",
+      "zip_url": "https://api.skillhub.cn/api/v1/download?slug=wechatide-skill",
+      "source": "community",
+      "version": "0.3.2",
+      "installedAt": "2026-07-27T04:21:51Z"
+    }
+  }
+}

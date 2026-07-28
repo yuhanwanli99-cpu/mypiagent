@@ -1,0 +1,4 @@
+[commit]
+enabled = true
+trigger_mode = "on_goal"
+defer_to_goal_audit = true
