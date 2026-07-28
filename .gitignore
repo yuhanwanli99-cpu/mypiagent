@@ -1,6 +1,8 @@
 # 依赖/构建产物
 node_modules/
 .ruff_cache/
+__pycache__/
+*.pyc
 
 # 运行时状态与临时诊断产物（不属于流水线源码，体积大/含临时数据）
 pi-diagnostics/
