@@ -125,6 +125,11 @@ web_search:  ✅
   `true` → `tester-visual`（zhipu/glm-4.1v，视觉证据）；`false`/未设置 → `tester`（deepseek/deepseek-v4-flash，纯文本证据）。
   模型已锁定在各自 agent 的 frontmatter 中，Orchestrator 不得通过 `Agent({model:...})` 覆盖。
 - 其他状态不派发
+- **⚠️ 必须带 `run_in_background: true`**：所有对 software-architect/developer/tester/tester-visual
+  的 `Agent(...)` 调用都必须显式传 `run_in_background: true`。`run_in_background` 默认是
+  `false`（前台同步执行），漏传会导致本次调用阻塞整个 Orchestrator 会话，直到子代理跑完才能
+  响应用户——这是历史真实发生过的回归。`spoq-enforcer.ts` 会在 `tool_call` 阶段兜底强制改写，
+  但不要依赖兜底，DISPATCH 时必须自己正确传参。
 
 ### 6) SAVE
 

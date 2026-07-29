@@ -54,6 +54,33 @@ export default function (pi: ExtensionAPI) {
     };
   });
 
+  // P0-4: 修复"子 Agent 卡死主模型"回归。Agent 工具的 run_in_background 默认 false
+  // （见 @tintinweb/pi-subagents invocation-config.js），此前完全依赖 Orchestrator
+  // 自己记得传 run_in_background:true——但角色定义硬化后，Orchestrator 的注入提醒
+  // （buildMessage）和 orchestrator.md 都从未显式提过这个参数，导致模型经常漏传，
+  // Agent 调用退化为前台同步执行，主会话被整段阻塞直到子代理跑完。
+  // 这里在真正派发前强制改写 event.input，不再依赖模型记性：
+  // Orchestrator（currentRole === null）派发四个 SPOQ 角色时，若未显式传
+  // run_in_background:true 且未使用 schedule/resume（这两者有各自的既定语义，
+  // 不代为覆盖），直接原地改成 true。
+  pi.on("tool_call", async (event, ctx) => {
+    if (event.toolName !== "Agent") return;
+    if (currentRole !== null) return; // 只管 Orchestrator 自己发起的派发，子代理禁止再派发（disallowed_tools 已挡）
+    const input = event.input as Record<string, unknown>;
+    const subagentType = String(input.subagent_type ?? "");
+    const SPOQ_ROLES = new Set(["software-architect", "developer", "tester", "tester-visual"]);
+    if (!SPOQ_ROLES.has(subagentType)) return;
+    if (input.schedule || input.resume) return;
+    if (input.run_in_background !== true) {
+      input.run_in_background = true;
+      appendTelemetry(ctx.cwd ?? currentCwd, {
+        type: "run_in_background_forced",
+        subagentType,
+        note: "Orchestrator 未显式传 run_in_background:true，已由 spoq-enforcer 强制改写，避免阻塞主会话",
+      });
+    }
+  });
+
   // P1-1: 角色错乱检测。子代理若在输出中自称 Orchestrator / 尝试拆任务派代理，
   // 自动记录违规并写邮件通知 Orchestrator，而不是依赖子代理"自觉"上报。
   pi.on("message_end", async (event) => {
@@ -570,7 +597,9 @@ function buildMessage(phase: Phase, role: Role): string {
     "## 当前阶段：Phase 2（执行-状态机模式）\n" +
     "- 主代理(Orchestrator)：严格按硬转换表执行 LOAD→POLL→APPLY→FIND→DISPATCH→SAVE→CHECK。禁止读源码/写代码。\n" +
     "- 产物路径优先级：.pi/spoq-mailbox/{task}/... 优先，docs/... 兜底。\n" +
-    "- testing→done 严格门禁：仅接受 PASS，出现 FAIL / CONDITIONAL PASS / with reservations 必须回退。"
+    "- testing→done 严格门禁：仅接受 PASS，出现 FAIL / CONDITIONAL PASS / with reservations 必须回退。\n" +
+    "- DISPATCH 派发 Agent 时始终带 run_in_background: true（即使漏传，spoq-enforcer 也会强制改写，" +
+    "但不要依赖这一点自己不传——正确传参可避免不必要的告警日志）。"
   );
 }
 
