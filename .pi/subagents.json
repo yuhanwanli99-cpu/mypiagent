@@ -9,5 +9,5 @@
   "schedulingEnabled": true,
   "scopeModelsEnabled": true,
   "disableDefaultAgents": false,
-  "toolDescriptionMode": "full"
+  "toolDescriptionMode": "compact"
 }
