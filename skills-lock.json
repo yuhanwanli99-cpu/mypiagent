@@ -4,8 +4,8 @@
     "wechat-devtools": {
       "source": "WaterTian/wechat-devtools-mcp",
       "sourceType": "github",
-      "skillPath": ".agents/skills/wechat-devtools/SKILL.md",
-      "computedHash": "9d3f89627948ae454b10e7dbc619337e0b62eae8e6351b430cefbbfa269c50cb"
+      "skillPath": ".agents/skills/wechatide-skill/SKILL.md",
+      "computedHash": "c02dc4d44bb7f5f722c2b97295157c39ecd422cd40e7a3fc15e49ab884570625"
     }
   }
 }
