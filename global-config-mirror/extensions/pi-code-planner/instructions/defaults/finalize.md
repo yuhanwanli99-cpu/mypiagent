@@ -1,4 +1,4 @@
-﻿# finalize
+# finalize
 
 ## Purpose
 

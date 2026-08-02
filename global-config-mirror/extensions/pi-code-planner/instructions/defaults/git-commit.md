@@ -1,4 +1,4 @@
-﻿# git-commit
+# git-commit
 
 ## Purpose
 

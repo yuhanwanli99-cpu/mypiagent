@@ -1,4 +1,4 @@
-﻿# refactor
+# refactor
 
 ## Purpose
 

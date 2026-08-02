@@ -1,4 +1,4 @@
-﻿# discovery
+# discovery
 
 ## Purpose
 

@@ -1,4 +1,4 @@
-﻿# planning
+# planning
 
 ## Purpose
 

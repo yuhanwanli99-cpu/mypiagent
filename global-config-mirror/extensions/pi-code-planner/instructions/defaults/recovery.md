@@ -1,4 +1,4 @@
-﻿# recovery
+# recovery
 
 ## Purpose
 

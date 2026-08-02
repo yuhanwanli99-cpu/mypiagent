@@ -1,4 +1,4 @@
-﻿// @orca-managed-pi-extension
+// @orca-managed-pi-extension
 const BRAILLE_FRAMES = [
   '\u280b',
   '\u2819',

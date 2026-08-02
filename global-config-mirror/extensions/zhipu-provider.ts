@@ -1,4 +1,4 @@
-﻿/**
+/**
  * ZhipuAI Provider Extension for Pi
  * Registers Zhipu/GLM models as available providers
  */

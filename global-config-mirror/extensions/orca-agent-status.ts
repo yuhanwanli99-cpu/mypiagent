@@ -1,4 +1,4 @@
-﻿// @orca-managed-pi-extension
+// @orca-managed-pi-extension
 // Why: no package-specific type import here. Pi and OMP expose the same
 // extension API, but publish their types under different package names.
 // Why: warn-once so a recurring parse error on a malformed endpoint

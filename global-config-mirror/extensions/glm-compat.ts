@@ -1,4 +1,4 @@
-﻿/**
+/**
  * GLM Compat Extension — fixes GLM 400 for zai-coding-cn / z.ai only.
  *
  * Root cause (pi issue #547): z.ai's GLM API rejects messages from

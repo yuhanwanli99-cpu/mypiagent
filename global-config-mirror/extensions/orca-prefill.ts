@@ -1,4 +1,4 @@
-﻿// @orca-managed-pi-extension
+// @orca-managed-pi-extension
 export default function (pi) {
   pi.on('session_start', async (event, ctx) => {
     if (!process.env.ORCA_PANE_KEY) return
