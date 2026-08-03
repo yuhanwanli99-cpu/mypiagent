@@ -55,3 +55,13 @@ _（空 — 待补充）_
 ## 条目
 
 <!-- 按时间倒序排列，最新在上 -->
+
+---
+
+- **日期**: 2026-08-03
+- **任务**: orca-cross-terminal-comm
+- **Wave**: -
+- **类别**: 通信/协作
+- **教训**: PiAgent（pi worker 终端）与 Orca 内其他 agent 终端（GitHub Copilot CLI 等）的通信。文本注入（`orca terminal send --text`）任何时刻都能进目标输入框，但 **Enter 提交只有在目标终端处于 idle 等待输入时才生效**——目标忙碌（`◉ Working`/正在生成回复）时发送的 Enter 字节会被 TUI 吞掉，消息卡在输入框无法提交。曾误判为 Copilot CLI 不兼容 PTY 注入，实为时机问题。编排协议级（`orca orchestration`）不支持 copilot（组地址无 @copilot，copilot 不会 check 收件箱），但终端级 PTY 通信对任意 CLI 通用。
+- **标准**: 发送前先 `orca terminal wait --terminal <handle> --for tui-idle --timeout-ms <n>` 或轮询 `orca terminal read`，确认输入框为空（`❯` 后无文本）且无 `◉ Working`/思考中标记；`status: running` 是常态，不代表忙碌，必须以 TUI 内容判定。发送后 5-10 秒复查输入框应清空且出现 Working（= 提交成功）。
+- **建议**: 跨终端消息协议四步：① wait tui-idle → ② `orca terminal send --text "..." --enter --json` → ③ wait tui-idle（等对方回复）→ ④ `orca terminal read --limit N --json`。需要完全自动化且不依赖 TUI 时，用进程管道模式（copilot 用 `copilot -p "问题"`）替代终端注入。目标终端 handle 用 `orca terminal list --json` 获取，发送前确认 `connected: true`。
