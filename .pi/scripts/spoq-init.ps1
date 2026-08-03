@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
     SPOQ 流水线一键初始化（v6 全局化版）
@@ -22,6 +22,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# 注意：PowerShell 5.1 的 Set-Content -Encoding UTF8 会写入带 BOM 的文件，
+# 而 spoq-enforcer.ts 用 JSON.parse 直接解析（Node 的 readFileSync 保留 BOM 字符，
+# JSON.parse 会抛异常 → 状态机静默降级为 Phase 0，永远进不了 Phase 2）。
+# 因此这里统一用 .NET API 写 UTF-8 无 BOM（PS 5.1 / PS 7 行为一致）。
+$Utf8NoBom = New-Object System.Text.UTF8Encoding -ArgumentList $false
+
 $projectPi = Join-Path $Path ".pi"
 $mailboxDir = Join-Path $projectPi "spoq-mailbox"
 $statePath = Join-Path $projectPi "spoq-state.json"
@@ -44,19 +50,20 @@ if (Test-Path $statePath) {
         createdAt   = $now
         updatedAt   = $now
     }
-    ($state | ConvertTo-Json -Depth 10) | Set-Content -Path $statePath -Encoding UTF8
+    [System.IO.File]::WriteAllText($statePath, ($state | ConvertTo-Json -Depth 10), $Utf8NoBom)
     Write-Host "OK: $statePath 已创建（phase=planning，等待 Phase 1 规划完成后写入 dag/currentWave）"
 }
 
 if (Test-Path $lessonsPath) {
     Write-Host "SKIP: $lessonsPath 已存在，不覆盖。"
 } else {
-    @"
+    $lessonsContent = @"
 # Lessons Learned
 
 本文件由 SPOQ Orchestrator 在每个 Wave 结束后追加教训条目。
 格式：`- **日期**: YYYY-MM-DD [Wave N][task-id] {类别} 教训：... 标准：... 建议：...`
-"@ | Set-Content -Path $lessonsPath -Encoding UTF8
+"@
+    [System.IO.File]::WriteAllText($lessonsPath, $lessonsContent, $Utf8NoBom)
     Write-Host "OK: $lessonsPath 已创建"
 }
 
