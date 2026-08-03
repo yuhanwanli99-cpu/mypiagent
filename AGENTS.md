@@ -91,6 +91,48 @@ agent frontmatter（`~/.pi/agent/agents/*.md`）里的 `model` 字段对 `Agent(
 
 ---
 
+## v6 全局化部署（2026-08-03）
+
+**背景**：SPOQ 此前只在单台机器的单个项目目录（原 `F:\piagent`）里生效——`spoq-enforcer.ts`
+作为项目级扩展放在 `.pi/extensions/`，`agent-loops/*.md`、`spoq-state.schema.md` 也只存在于
+该项目的 `.pi/` 里。换到新机器（当前 `C:\Users\Administrator`）后这个项目目录不存在，
+之前"真正生效的角色定义只在旧机器 `~/.pi/agent/agents/*.md`"的假设也不再成立——需要一套
+不依赖单一项目路径、可在任意工作目录（当前约定 `G:\git\*`）下即开即用的部署方式。
+
+**改动**：
+
+1. **`spoq-enforcer.ts` 改为全局扩展**：部署到 `~/.pi/agent/extensions/spoq-enforcer.ts`
+   （对本机所有 pi 会话生效，与 `pi-telemetry.ts` 同级）。该文件此前已经是纯 `cwd` 相对路径
+   实现（`process.cwd()` / `ctx.cwd`，无硬编码绝对路径），可以直接全局化，无需大改。
+   `determinePhase()` 在项目目录不存在 `.pi/spoq-state.json` 时天然返回 `phase0`（自由探索），
+   因此对不使用 SPOQ 的普通项目零副作用。
+2. **角色文档/schema 改为"项目覆盖 → 全局兜底"两级查找**：`loadRoleDoc()` 新增
+   `globalAgentDir()`（复用 `pi-telemetry.ts` 验证过的 `PI_CODING_AGENT_DIR` 环境变量优先、
+   否则 `os.homedir()/.pi/agent` 的写法），搜索顺序为：
+   - 项目本地 `.pi/agent-loops/{role}.md`（存在则优先，允许单个项目定制某个角色）
+   - 全局模板 `~/.pi/agent/spoq-templates/agent-loops/{role}.md`（新项目零配置兜底）
+   `agent-loops/*.md`、`spoq-state.schema.md` 的全局模板快照同时保存在本仓库
+   `global-config-mirror/spoq-templates/`，与 `~/.pi/agent/spoq-templates/` 保持一致。
+3. **新增 `spoq-init.ps1` 一键初始化脚本**：部署在 `~/.pi/agent/scripts/spoq-init.ps1`
+   （源码同步保存于 `.pi/scripts/spoq-init.ps1`）。用法：`spoq-init.ps1 -Path <项目目录>`，
+   在目标项目下创建最小骨架（`.pi/spoq-state.json`、`.pi/spoq-mailbox/`、
+   `.pi/lessons-learned.md`），不需要复制 `agent-loops/*.md`——角色定义走全局兜底。
+   已在 `G:\git\_spoq-smoke-test` 做过烟囱测试：脚本创建的骨架 + 全局兜底的
+   `loadRoleDoc()` 组合验证通过（无项目覆盖时正确读到全局模板路径）。
+4. **模型/密钥现状（本机 `C:\Users\Administrator\.pi\agent`）**：`auth.json` 已配置
+   `deepseek` API key；`models-store.json` 已注册 `deepseek-v4-pro`（Architect 专用）和
+   `deepseek-v4-flash`（Developer/Tester 默认）；`agents/*.md` 模型锁定与 v4 说明一致，未变。
+   `zhipu` 视觉 key 仍未配置，`tester-visual` 暂时走 v5 说明里的"程序化验证代替视觉模型直接看图"。
+
+**不变的部分**：硬转换表（T1-T16）、邮箱协议、教训持久化、6 维测试标准、状态文件 schema
+本身完全不变——v6 只是解决"部署在哪个目录/哪台机器"的问题，不改变 SPOQ 的编排逻辑。
+
+**后续新项目接入方式**：在目标项目目录运行 `spoq-init.ps1`，然后正常发起对话即可进入
+Phase 0/1；无需手动 `git clone` 或复制 `agent-loops/*.md`。若某个角色需要项目专属行为，
+在该项目 `.pi/agent-loops/{role}.md` 放同名文件覆盖全局模板即可。
+
+---
+
 ## 🔴 铁律
 
 1. **Phase 0 绝对自由** — 可以读代码、搜索、推理、拆解、搭建框架原型

@@ -1,6 +1,18 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, statSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
+
+// v6 全局化（2026-08-03）：spoq-enforcer 现在部署为全局扩展
+// （~/.pi/agent/extensions/spoq-enforcer.ts），对任意项目目录生效。
+// agent-loops/*.md、spoq-state.schema.md 等静态文档不再要求每个项目自带一份：
+// 项目内 .pi/agent-loops/{role}.md 存在则优先使用（允许项目覆盖角色定义），
+// 缺失时回退到全局模板目录 ~/.pi/agent/spoq-templates/agent-loops/{role}.md。
+// 沿用 pi-telemetry.ts 里验证过的写法：Windows 下 Node 无 HOME，用 os.homedir()
+// （USERPROFILE），并优先尊重 pi 提供的 PI_CODING_AGENT_DIR。
+function globalAgentDir(): string {
+  return process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
+}
 
 type Role = "architect" | "developer" | "tester" | "tester-visual" | null;
 
@@ -638,18 +650,24 @@ function loadRoleDoc(cwd: string, role: Exclude<Role, null>): string | null {
   const candidates =
     role === "architect" ? ["architect.md"] : role === "tester-visual" ? ["tester-visual.md", "tester.md"] : [`${role}.md`];
 
-  for (const fileName of candidates) {
-    const path = join(cwd, ".pi", "agent-loops", fileName);
-    if (!existsSync(path)) continue;
-    try {
-      const stat = statSync(path);
-      const cached = roleDocCache.get(path);
-      if (cached && cached.mtimeMs === stat.mtimeMs) return cached.content;
-      const content = readFileSync(path, "utf-8");
-      roleDocCache.set(path, { mtimeMs: stat.mtimeMs, content });
-      return content;
-    } catch {
-      continue;
+  // 搜索顺序：项目本地 .pi/agent-loops/（允许项目按需覆盖角色定义）
+  // → 全局模板 ~/.pi/agent/spoq-templates/agent-loops/（新项目零配置可用的兜底）。
+  const searchDirs = [join(cwd, ".pi", "agent-loops"), join(globalAgentDir(), "spoq-templates", "agent-loops")];
+
+  for (const dir of searchDirs) {
+    for (const fileName of candidates) {
+      const path = join(dir, fileName);
+      if (!existsSync(path)) continue;
+      try {
+        const stat = statSync(path);
+        const cached = roleDocCache.get(path);
+        if (cached && cached.mtimeMs === stat.mtimeMs) return cached.content;
+        const content = readFileSync(path, "utf-8");
+        roleDocCache.set(path, { mtimeMs: stat.mtimeMs, content });
+        return content;
+      } catch {
+        continue;
+      }
     }
   }
   return null;

@@ -20,5 +20,17 @@
 不要再从 `~/.pi/agent` 单独 git push。
 
 真正生效的四个 SPOQ 角色定义（含模型锁定 / disallowed_tools）仍然在
-`C:\Users\33784\.pi\agent\agents\{software-architect,developer,tester,tester-visual}.md`，
+`~\.pi\agent\agents\{software-architect,developer,tester,tester-visual}.md`，
 这里不重复保存旧版本，避免和 AGENTS.md 里记录的最新版本产生混淆。
+
+## v6 全局化补充（2026-08-03）
+
+本机（`C:\Users\Administrator`）已把 SPOQ 从"单一项目目录"升级为"全局部署"，详见
+`AGENTS.md` 的 "v6 全局化部署" 一节。与本目录相关的变化：
+
+- `extensions/` 里新增的 `spoq-enforcer.ts` **不在这里重复保存**——它现在和
+  agents/*.md 一样是"真正生效"的全局文件（`~\.pi\agent\extensions\spoq-enforcer.ts`），
+  唯一权威源码仍是本仓库 `.pi/extensions/spoq-enforcer.ts`，只是新增了部署目标而已。
+- 新增 `spoq-templates/`（本目录下）—— `~\.pi\agent\spoq-templates\` 的快照备份，
+  内含 `agent-loops/*.md` 角色手册和 `spoq-state.schema.md`，供任意项目在缺少本地
+  `.pi/agent-loops/{role}.md` 时兜底读取，是新项目"零配置接入 SPOQ"的关键。
