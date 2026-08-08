@@ -137,21 +137,25 @@ export default function (pi: any) {
     if (text.startsWith("/impl")) text = text.replace(/^\/impl\s*/, "").trim();
     if (!text) return { action: "continue" };
 
-    // 确认词 → 直接放行
-    const confirmWords = ["确认", "继续", "直接做", "ok", "yes", "行", "好"];
-    if (confirmWords.includes(text.toLowerCase().trim())) return { action: "continue" };
+    // ── 菜单回复/确认词/单字母 → 直接放行，不跑 Router ──
+    // 主代理在等 Gate/模式选择回复时，用户的 A/B/C 或确认词必须原样到达主代理上下文，
+    // 由主代理自己消费（状态机靠主代理记忆）。绝不能把回复当新任务分类（否则死循环）。
+    const confirmWords = ["确认", "继续", "直接做", "ok", "yes", "行", "好", "同意", "可以"];
+    const singleLetter = /^[ABC][。.\s]*$/i.test(text);
+    if (confirmWords.includes(text.toLowerCase().trim()) || singleLetter) {
+      return { action: "continue" }; // 原样放行
+    }
 
     // Router 分类（不落任何状态，只给主代理一个信号）
     const { mode, estTasks, reason } = await routeTask(cwd, text);
 
     if (mode === "DIRECT") {
-      return { action: "transform", text: `[SPOQ] ROUTE=DIRECT：单文件小改动，直接实现。\n\n${text}` };
+      return { action: "transform", text: `[SPOQ] ROUTE=DIRECT：单文件小改动，直接实现。项目目录: ${cwd}。\n\n${text}` };
     }
-    if (mode === "ESCALATE") {
-      return { action: "transform", text: `[SPOQ] ROUTE=ESCALATE（预估 ${estTasks} 任务，${reason}）：规模异常或不确定，请向用户展示模式选择（A 全程 SOP 流水线 / B 直接干 / C 分批），等用户回复后再按 SOP.md 执行。\n\n${text}` };
-    }
-    // PIPELINE
-    return { action: "transform", text: `[SPOQ] ROUTE=PIPELINE（预估 ${estTasks} 任务，${reason}）：按 SOP.md 执行。先读 C:/Users/Administrator/.pi/agent/spoq-templates/SOP.md 了解角色流水线，然后从 L1（需求分析师+检索员）开始派发子代理。\n\n${text}` };
+    // PIPELINE / ESCALATE：统一按 SOP 执行。
+    // 规模确认不在这里做——主代理读完 SOP 执行清单第 8 条会自己停下问用户（模式选择必须等用户），
+    // 避免两层菜单混乱（Router 弹一次 + 主代理弹一次）。
+    return { action: "transform", text: `[SPOQ] ROUTE=${mode}（预估 ${estTasks} 任务${reason ? `，${reason}` : ""}）：按 SOP.md 执行。项目目录: ${cwd}（子代理工作目录同此，不要 cd 走）。先读 C:/Users/Administrator/.pi/agent/spoq-templates/SOP.md 了解角色流水线，然后从 L1（需求分析师+检索员）开始派发子代理。若预估任务数远超 10 或规模异常，按 SOP 执行清单第 8 条停下向用户确认执行模式。\n\n${text}` };
   });
 
   // ── before_agent_start: 注入 SOP 剧本（主代理靠上下文记忆执行，不落盘）──
@@ -167,15 +171,21 @@ export default function (pi: any) {
       systemPrompt:
         `你是 SPOQ 集群的指挥官（主代理）。你不是自由探索的助手，而是按 SOP 剧本执行的角色流水线指挥者。` +
         `\n` +
+        `\n=== 项目位置 ===` +
+        `\n当前项目根目录: ${cwd}。子代理工作目录也是 ${cwd}。绝对不要 cd 到其他目录找项目——项目就在 CWD。` +
         `\n=== SOP 剧本 ===` +
         `\n${sopText || "（SOP.md 未找到，按常规方式处理）"}` +
         `\n=== 执行纪律 ===` +
         `\n- 每轮先回顾自己的对话上下文：当前进行到 SOP 的哪一层、已产出哪些交接物、下一步该派谁。` +
         `\n- 派发子代理用 Agent 工具（run_in_background=true），子代理是手脚，派发后不阻塞等待，继续推进或等其完成事件。` +
+        `\n- 子代理的工作目录是 ${cwd}，prompt 里直接给绝对路径，不要让子代理自己找项目。` +
+        `\n- 调研/查证阶段（L1/L2）：按缺口拆批派发。需求分析师/架构师产出缺口清单后，把 GAP1..N 分成几组，每组一个检索员（每个只填 1-3 个缺口），同一轮并行发。缺口未闭合就按剩余缺口重拆再派，禁止一个 agent 同时扛"合并+对账+构建核实"。` +
+        `\n- 交接物固定写入 ${cwd}/.pi/spoq/（文件名见 SOP 5.0），路径在 prompt 里显式指定，子代理不得自创目录。多个检索员分片（search-report-{gapid}.md）由你机械汇合。` +
         `\n- 遇到 Gate1/Gate2 人工确认点 → 停下展示给用户，等回复后再继续。` +
-        `\n- 子代理产出交接物必须符合 SOP.md 第 5 节 schema（字段齐全、来源存在），不合规打回该层重做。` +
+        `\n- 子代理产出交接物必须符合 SOP.md 第 5 节 schema（字段齐全/来源存在），不合规打回该层重做。` +
         `\n- 你的记忆只来自当前对话上下文；任务完成或用户终止后，清空自己的"进行中"认知。` +
-        `\n- 禁止：在用户没有回复菜单时自行替用户决策（Gate/模式选择必须等用户）。`,
+        `\n- 禁止：在用户没有回复菜单时自行替用户决策（Gate/模式选择必须等用户）。` +
+        `\n- 禁止：自己深度探索项目源码——那是子代理（需求分析师/检索员）的活，你只做派发和流程。`,
     };
   });
 }
