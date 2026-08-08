@@ -163,6 +163,14 @@ export default function (pi: any) {
         }
         if (picked.length) {
           decisionText = "\n\n【用户已做的技术取舍】\n" + picked.map(p => `- ${p}`).join("\n");
+          // 升级：选完后再让用户自由补充（约束/偏好/边界，空直接跳过）
+          const extra = await ctx.ui.input(
+            "还有补充吗？（工程约束/偏好/边界，直接回车跳过）",
+            "",
+          );
+          if (extra && extra.trim()) {
+            decisionText += "\n\n【用户补充】\n" + extra.trim();
+          }
           text = text + decisionText;
         }
       }
