@@ -59,8 +59,20 @@ function collectRepoContext(cwd: string): string {
   return parts.join("\n");
 }
 
-function callRouter(apiKey: string, taskText: string, repoCtx: string): Promise<string | null> {
+function callRouter(apiKey: string, taskText: string, repoCtx: string, askDecisions = false): Promise<string | null> {
   return new Promise((resolve) => {
+    const decisionInstr = askDecisions
+      ? `\n` +
+        `\n**同时：识别这个需求里【需求→工程实现】的关键决策点**——即"用户没说但实现时必须选"的岔路：` +
+        `\n- 技术栈/框架选择（如：web套壳 vs 原生 vs 跨端）` +
+        `\n- 实现对象/模型选择（如：用哪个 live2d 模型/哪个 TTS）` +
+        `\n- 行为/方案选择（如：播哪段动画/用什么交互方式）` +
+        `\n对每个决策点输出（用非工程语言，普通人能懂）：` +
+        `\n<!-- DECISION: 决策点一句话 -->` +
+        `\n<!-- OPTION: 选项A | 一句话说明 | 优点 | 缺点 -->` +
+        `\n<!-- OPTION: 选项B | 一句话说明 | 优点 | 缺点 -->` +
+        `\n（无决策点则输出 <!-- DECISION: NONE -->）`
+      : "";
     const body = JSON.stringify({
       model: "deepseek-v4-flash",
       messages: [{
@@ -73,9 +85,10 @@ function callRouter(apiKey: string, taskText: string, repoCtx: string): Promise<
           `COMPLEX: 多模块但范围清晰（主代理生成计划 → 并行派多个 coder 实现）\n` +
           `LARGE: 深度重构/跨平台/长程依赖/接口联动（走完整 SOP 状态机）\n` +
           `LARGE 的判断标准：需要先摸清现状再定方案（重构/新架构/多端联动）才算；否则是 COMPLEX。\n` +
-          `不确定时倾向 COMPLEX。EST_TASKS 给出预估拆解出的任务数。EST_FILES 给出预估波及的文件数（先想：要改哪些文件、新建哪些、连带影响的哪些）。`
+          `不确定时倾向 COMPLEX。EST_TASKS 给出预估拆解出的任务数。EST_FILES 给出预估波及的文件数（先想：要改哪些文件、新建哪些、连带影响的哪些）。` +
+          decisionInstr
       }],
-      max_tokens: 200, temperature: 0.0,
+      max_tokens: 600, temperature: 0.0,
       extra_body: { thinking: { type: "disabled" } }
     });
     const req = request({
@@ -94,16 +107,15 @@ function callRouter(apiKey: string, taskText: string, repoCtx: string): Promise<
   });
 }
 
-async function routeTask(cwd: string, text: string): Promise<{ mode: string; estTasks: number; estFiles: number; reason: string }> {
+async function routeTask(cwd: string, text: string, askDecisions = false): Promise<{ mode: string; estTasks: number; estFiles: number; reason: string; decisions: { question: string; options: { label: string; desc: string; pros: string; cons: string }[] }[] }> {
   const apiKey = getApiKey();
-  if (!apiKey) return { mode: "LARGE", estTasks: 0, estFiles: 0, reason: "no_api_key（fail-closed：key 缺失时保守走 LARGE，阶段0 任务分解会触发人工确认）" };
+  if (!apiKey) return { mode: "LARGE", estTasks: 0, estFiles: 0, reason: "no_api_key（fail-closed：key 缺失时保守走 LARGE，阶段0 任务分解会触发人工确认）", decisions: [] };
 
   const repoCtx = collectRepoContext(cwd);
-  // 自洽投票 3 次
+  // 自洽投票 3 次（决策点检测只需 1 次足够，复杂度仍投票）
   const results = await Promise.all([
-    callRouter(apiKey, text, repoCtx),
-    callRouter(apiKey, text, repoCtx),
-    callRouter(apiKey, text, repoCtx),
+    callRouter(apiKey, text, repoCtx, askDecisions),
+    ...(askDecisions ? [] : [callRouter(apiKey, text, repoCtx), callRouter(apiKey, text, repoCtx)]),
   ]);
   const votes = results.map(r => {
     const m = r?.match(/<!--\s*SPOQ-ROUTE:\s*(SIMPLE|COMPLEX|LARGE)\s*-->/i);
@@ -120,8 +132,28 @@ async function routeTask(cwd: string, text: string): Promise<{ mode: string; est
   const estFiles = fileMatch ? parseInt(fileMatch[1], 10) : 0;
   const reason = results.find(r => r?.includes("REASON:"))?.match(/REASON:\s*(.+?)\s*-->/i)?.[1] || "";
 
-  appendAudit(cwd, { time: new Date().toISOString(), action: "routed", mode, votes, estTasks, estFiles, reason });
-  return { mode, estTasks, estFiles, reason };
+  // 解析决策点（仅 askDecisions 时有）
+  const decisions: { question: string; options: { label: string; desc: string; pros: string; cons: string }[] }[] = [];
+  if (askDecisions) {
+    const r = results[0] || "";
+    const decBlocks = r.match(/<!-- DECISION: ([^\n]+) -->/g) || [];
+    for (const block of decBlocks) {
+      const qm = block.match(/DECISION: ([^\n]+)/);
+      if (!qm || /NONE/i.test(qm[1])) continue;
+      const q = qm[1].trim();
+      const opts: { label: string; desc: string; pros: string; cons: string }[] = [];
+      // 该决策点后的 OPTION 行（直到下一个 DECISION）
+      const after = r.slice(r.indexOf(block) + block.length, r.indexOf(decBlocks[decBlocks.indexOf(block) + 1] ?? "\u0000"));
+      for (const om of after.matchAll(/<!-- OPTION: ([^\n]+) -->/g)) {
+        const parts = om[1].split("|").map(s => s.trim());
+        opts.push({ label: parts[0] || "", desc: parts[1] || "", pros: parts[2] || "", cons: parts[3] || "" });
+      }
+      if (opts.length) decisions.push({ question: q, options: opts });
+    }
+  }
+
+  appendAudit(cwd, { time: new Date().toISOString(), action: askDecisions ? "routed+decisions" : "routed", mode, votes, estTasks, estFiles, reason, decisions: decisions.length });
+  return { mode, estTasks, estFiles, reason, decisions };
 }
 
 // ═══════════════════════════════════════
@@ -156,7 +188,31 @@ export default function (pi: any) {
       return { action: "continue" }; // 原样放行
     }
 
-    // Router 分类（不落任何状态，只给主代理一个信号）
+    // ── 翻译层：决策点检测 + 用户取舍（在复杂度锁死前）──
+    // 主模型 = 工程↔非工程翻译器：识别需求里"用户没说但实现时必须选"的岔路，
+    // 翻译成非工程语言+选项+利弊，弹框让用户做平衡取舍（不靠 AI 想当然填技术栈）。
+    const firstPass = await routeTask(cwd, text, true);
+    let decisionText = "";
+    if (firstPass.decisions.length > 0) {
+      const picked: string[] = [];
+      for (const d of firstPass.decisions) {
+        const opts = d.options.map(o => `${o.label}（${o.desc}）\n    👍 ${o.pros}\n    👎 ${o.cons}`);
+        const sel = await ctx.ui.select(
+          `需求决策：${d.question}（由你取舍，AI 不替你选）`,
+          opts,
+        );
+        if (sel) {
+          const label = sel.split("（")[0].trim();
+          picked.push(`${d.question} → 选 ${label}`);
+        }
+      }
+      if (picked.length) {
+        decisionText = "\n\n【用户已做的技术取舍】\n" + picked.map(p => `- ${p}`).join("\n");
+        text = text + decisionText; // 用户决策并入任务描述
+      }
+    }
+
+    // Router 分类（带用户决策后重新判定，不落任何状态）
     // 档位由 AI 自己判断（用户只输入意图，不需要选档位）
     const { mode, estTasks, estFiles, reason } = await routeTask(cwd, text);
     sessionMode = mode; // 记住 AI 判断的档位（仅用于参考/日志）
@@ -193,16 +249,23 @@ export default function (pi: any) {
         `\n=== SOP 剧本 ===` +
         `\n${sopText || "（SOP.md 未找到，按常规方式处理）"}` +
         `\n=== 执行纪律 ===` +
+        `\n【你的角色：工程↔非工程翻译器】` +
+        `\n    你是主模型：用户只输入意图（可能是非工程语言），你的职责是——` +
+        `\n    ① 摸工程现状（可以指挥其他 AI 作为探索双手——可以不是必须；简单自己看，复杂派侦察员）` +
+        `\n    ② 把需求翻译成工程决策点：识别"用户没说但实现时必须选"的岔路（技术栈/模型/方案选择）` +
+        `\n    ③ 每个决策点用非工程语言给选项+利弊，让用户做平衡取舍（你只呈现，不替你选）` +
+        `\n    ④ 用户取舍后需求和工程锁死 → 复杂度才可判 → 走 SIMPLE/COMPLEX/LARGE` +
+        `\n    禁止：想当然填自己熟悉的技术栈（如 web 套壳）而不给用户选；禁止替用户做技术选型决策。` +
         `\n- 首先看收到的 ROUTE 标签，按三种模式执行：` +
         `\n    ROUTE=SIMPLE → 直接实现，不派子代理。` +
-        `\n    ROUTE=COMPLEX → 摸清现状 → 生成简短实现计划（分几个模块）→ 同一轮并行派多个 coder（developer）各自实现一块，不走完整 SOP。` +
-        `\n    ROUTE=LARGE → 走完整 SOP 五阶段：⓪任务分解（侦察员并行→任务清单+依赖分组→人工确认）→ ①契约（需求设计师→contract-{module}.md）→ ②排班（测试经理按文件配对 tester+coder+文件锁）→ ③并行 TDD（tester 先写 RED→coder 实现 GREEN，失败经测试经理脱敏转发）→ ④收口（整体测试+错误分级：小错补丁/大错重写）。` +
+        `\n    ROUTE=COMPLEX → 摸清现状 → 架构师（或你自己）产出计划 → 用户确认 → 并行 TDD（多对 tester+coder，文件锁：coder 禁读 tests/、tester 禁读 src/）。` +
+        `\n    ROUTE=LARGE → 走完整 SOP 五阶段：⓪任务分解（侦察员并行→任务清单+依赖分组→人工确认）→ ①契约（接口设计师+测试经理共同产出 contract-{module}.md）→ ②排班（测试经理按文件配对 tester+coder+文件锁）→ ③并行 TDD（tester 先写 RED→coder 实现 GREEN，失败经测试经理脱敏转发）→ ④收口（整体测试+错误分级：小错补丁/大错重写）。` +
         `\n- 每轮先回顾自己的对话上下文：当前进行到哪一步、已产出哪些交接物、下一步该派谁。` +
         `\n- 派发子代理用 Agent 工具（run_in_background=true），子代理是手脚，派发后不阻塞等待，继续推进或等其完成事件。` +
         `\n- 子代理的工作目录是 ${cwd}，prompt 里直接给绝对路径，不要让子代理自己找项目。` +
         `\n【探索后自检 + 是否开干确认（强制）】` +
         `\n    用户只输入意图，档位由你（Router 已判）决定。开工前必须：` +
-        `\n    ① 探索/摸清现状（SIMPLE 也至少看一眼目标文件/依赖是否存在）` +
+        `\n    ① 探索/摸清现状（SIMPLE 也至少看一眼目标文件/依赖是否存在；复杂任务可派侦察员当你的手）` +
         `\n    ② 自问"实际改动范围与 ROUTE 档位相符吗？"——检查：目标功能/依赖是否已存在（例：任务说"实现 live2d 眨眼"但项目根本没有 live2d）、实际要改文件数/新建模块/选架构/配测试是否远超预估、是否要跨端` +
         `\n    ③ 相符 → 生成简短微计划 → 【停下，向用户展示确认信息并问"是否开干"】，用户确认后再动手` +
         `\n       确认信息必须包含三部分：` +
@@ -212,16 +275,17 @@ export default function (pi: any) {
         `\n    ④ 不符（探索结果与初判断相反）→ 【停下，向用户展示探索发现 + 建议的新档位，让用户重新裁定】` +
         `\n    禁止：探索后发现规模远超档位仍自行继续；禁止跳过"是否开干"直接动手；禁止确认时不展示复杂度判定/改动预估/微计划。` +
         `\n- LARGE 阶段0：派多个侦察员（flash，并行）按模块分片摸现状，各写 recon-{模块}.md，主代理汇合出任务分解清单+依赖分组，停下人工确认。` +
+        `\n- LARGE 阶段1 契约：接口设计师（接口签名+schema）+ 测试经理（验收断言）共同产出 contract-{module}.md——契约 = 接口定义 + 可执行验收，不是单一"需求设计师"。` +
         `\n- LARGE 阶段2：测试经理排班（文件→tester+coder 配对，文件锁双向隔离：coder 禁读 tests/、tester 禁读 src/），依赖分组摘要上报你（紧凑版），文件评估留测试经理。` +
         `\n- LARGE 阶段3：tester 先写测试（RED）→ coder 实现（GREEN）；失败信息经测试经理脱敏转发（不报测试源码）；未完成依赖用契约测试/stub；同一行为点 ≥3 次 RED 不过上报你升级。` +
         `\n- LARGE 阶段4：整体测试失败 → 测试经理脱敏上报（含影响面）→ 你分级：小错（局部细节）直接指挥 coder 修；大错（结构性）回架构/环境分析→重排→TDD 重写。绝不在错架构上打补丁。` +
         `\n- 交接物固定写入 ${cwd}/.pi/spoq/（文件名见 SOP 5.0），路径在 prompt 里显式指定，子代理不得自创目录。` +
         `\n- 上下文瘦身：收到子代理完成通知后只记录指针（文件路径+一行摘要），绝不把交接物全文读进上下文。需要细节时再读文件。` +
-        `\n- 遇到人工确认点（阶段0分解确认/阶段1契约确认/阶段4错误分级/探索后自检不符）→ 停下展示给用户，等回复后再继续。` +
+        `\n- 遇到人工确认点（决策点取舍/阶段0分解确认/阶段1契约确认/阶段4错误分级/探索后自检不符/是否开干）→ 停下展示给用户，等回复后再继续。` +
         `\n- 子代理产出交接物必须符合 SOP.md 第 5 节 schema（字段齐全/来源存在），不合规打回该层重做。` +
         `\n- 你的记忆只来自当前对话上下文；任务完成或用户终止后，清空自己的"进行中"认知。` +
-        `\n- 禁止：在用户没有回复菜单时自行替用户决策（Gate/模式选择必须等用户）。` +
-        `\n- 禁止：自己深度探索项目源码——那是子代理的活，你只做派发和流程。` +
+        `\n- 禁止：在用户没有回复菜单时自行替用户决策（Gate/模式选择/技术选型必须等用户）。` +
+        `\n- 禁止：想当然填技术栈或假设需求细节（那是翻译层要问用户的）；禁止把模糊需求当已明确处理。` +
         `\n- 禁止：自己改生产代码行为逻辑（那是 coder 的活）——机械修复（import/依赖/格式）可做，行为修复必须派 coder 或标超范围。`,
     };
   });
