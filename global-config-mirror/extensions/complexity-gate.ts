@@ -157,8 +157,8 @@ export default function (pi: any) {
     if (mode === "COMPLEX") {
       return { action: "transform", text: `[SPOQ] ROUTE=COMPLEX（预估 ${estTasks} 任务${reason ? `，${reason}` : ""}）：多模块但范围清晰。项目目录: ${cwd}。主代理先摸清现状生成简短实现计划（分几个模块/几步），然后同一轮并行派多个 coder（developer）各自实现一块。不走完整 SOP（不需要需求分析师/架构师/抽审）。\n\n${text}` };
     }
-    // LARGE：完整 SOP 状态机
-    return { action: "transform", text: `[SPOQ] ROUTE=LARGE（预估 ${estTasks} 任务${reason ? `，${reason}` : ""}）：深度重构/跨平台/长程依赖，走完整 SOP 状态机。项目目录: ${cwd}（子代理工作目录同此，不要 cd 走）。先读 C:/Users/Administrator/.pi/agent/spoq-templates/SOP.md 了解角色流水线，然后从 L1（需求分析师+检索员）开始派发子代理。若预估任务数远超 10 或规模异常，按 SOP 执行清单第 8 条停下向用户确认执行模式。\n\n${text}` };
+    // LARGE：完整 SOP 状态机（五阶段）
+    return { action: "transform", text: `[SPOQ] ROUTE=LARGE（预估 ${estTasks} 任务${reason ? `，${reason}` : ""}）：深度重构/跨平台/长程依赖，走完整 SOP 状态机。项目目录: ${cwd}（子代理工作目录同此，不要 cd 走）。先读 C:/Users/Administrator/.pi/agent/spoq-templates/SOP.md 了解角色流水线，然后按 LARGE 五阶段执行：⓪任务分解（侦察员并行分片→任务清单+依赖分组→人工确认）→ ①接口契约（需求设计师→contract-{module}.md）→ ②排班（测试经理按文件配对 tester+coder+文件锁）→ ③并行 TDD（tester 先写 RED→coder 实现 GREEN）→ ④收口（整体测试+错误分级）。若预估任务数远超 10 或规模异常，按 SOP 执行清单第 8 条停下向用户确认执行模式。\n\n${text}` };
   });
 
   // ── before_agent_start: 注入 SOP 剧本（主代理靠上下文记忆执行，不落盘）──
@@ -182,18 +182,22 @@ export default function (pi: any) {
         `\n- 首先看收到的 ROUTE 标签，按三种模式执行：` +
         `\n    ROUTE=SIMPLE → 直接实现，不派子代理。` +
         `\n    ROUTE=COMPLEX → 摸清现状 → 生成简短实现计划（分几个模块）→ 同一轮并行派多个 coder（developer）各自实现一块，不走完整 SOP。` +
-        `\n    ROUTE=LARGE → 走完整 SOP 状态机（L1 需求→Gate1→L2 架构→Gate2→contract→双端开发→测试→抽审）。` +
-        `\n- 每轮先回顾自己的对话上下文：当前进行到哪一层、已产出哪些交接物、下一步该派谁。` +
+        `\n    ROUTE=LARGE → 走完整 SOP 五阶段：⓪任务分解（侦察员并行→任务清单+依赖分组→人工确认）→ ①契约（需求设计师→contract-{module}.md）→ ②排班（测试经理按文件配对 tester+coder+文件锁）→ ③并行 TDD（tester 先写 RED→coder 实现 GREEN，失败经测试经理脱敏转发）→ ④收口（整体测试+错误分级：小错补丁/大错重写）。` +
+        `\n- 每轮先回顾自己的对话上下文：当前进行到哪一步、已产出哪些交接物、下一步该派谁。` +
         `\n- 派发子代理用 Agent 工具（run_in_background=true），子代理是手脚，派发后不阻塞等待，继续推进或等其完成事件。` +
         `\n- 子代理的工作目录是 ${cwd}，prompt 里直接给绝对路径，不要让子代理自己找项目。` +
-        `\n- 调研/查证阶段（L1/L2）：按缺口拆批派发。需求分析师/架构师产出缺口清单后，把 GAP1..N 分成几组，每组一个检索员（每个只填 1-3 个缺口），同一轮并行发。缺口未闭合就按剩余缺口重拆再派，禁止一个 agent 同时扛"合并+对账+构建核实"。` +
-        `\n- 交接物固定写入 ${cwd}/.pi/spoq/（文件名见 SOP 5.0），路径在 prompt 里显式指定，子代理不得自创目录。多个检索员分片（search-report-{gapid}.md）由你机械汇合。` +
+        `\n- LARGE 阶段0：派多个侦察员（flash，并行）按模块分片摸现状，各写 recon-{模块}.md，主代理汇合出任务分解清单+依赖分组，停下人工确认。` +
+        `\n- LARGE 阶段2：测试经理排班（文件→tester+coder 配对，文件锁双向隔离：coder 禁读 tests/、tester 禁读 src/），依赖分组摘要上报你（紧凑版），文件评估留测试经理。` +
+        `\n- LARGE 阶段3：tester 先写测试（RED）→ coder 实现（GREEN）；失败信息经测试经理脱敏转发（不报测试源码）；未完成依赖用契约测试/stub；同一行为点 ≥3 次 RED 不过上报你升级。` +
+        `\n- LARGE 阶段4：整体测试失败 → 测试经理脱敏上报（含影响面）→ 你分级：小错（局部细节）直接指挥 coder 修；大错（结构性）回架构/环境分析→重排→TDD 重写。绝不在错架构上打补丁。` +
+        `\n- 交接物固定写入 ${cwd}/.pi/spoq/（文件名见 SOP 5.0），路径在 prompt 里显式指定，子代理不得自创目录。` +
         `\n- 上下文瘦身：收到子代理完成通知后只记录指针（文件路径+一行摘要），绝不把交接物全文读进上下文。需要细节时再读文件。` +
-        `\n- 遇到 Gate1/Gate2 人工确认点 → 停下展示给用户，等回复后再继续。` +
+        `\n- 遇到人工确认点（阶段0分解确认/阶段1契约确认/阶段4错误分级/规模异常）→ 停下展示给用户，等回复后再继续。` +
         `\n- 子代理产出交接物必须符合 SOP.md 第 5 节 schema（字段齐全/来源存在），不合规打回该层重做。` +
         `\n- 你的记忆只来自当前对话上下文；任务完成或用户终止后，清空自己的"进行中"认知。` +
         `\n- 禁止：在用户没有回复菜单时自行替用户决策（Gate/模式选择必须等用户）。` +
-        `\n- 禁止：自己深度探索项目源码——那是子代理（需求分析师/检索员）的活，你只做派发和流程。`,
+        `\n- 禁止：自己深度探索项目源码——那是子代理的活，你只做派发和流程。` +
+        `\n- 禁止：自己改生产代码行为逻辑（那是 coder 的活）——机械修复（import/依赖/格式）可做，行为修复必须派 coder 或标超范围。`,
     };
   });
 }
