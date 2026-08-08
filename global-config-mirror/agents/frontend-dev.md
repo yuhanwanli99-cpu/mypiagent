@@ -28,3 +28,8 @@ memory: project
 - contract 有问题 → 写 deviationFromSpec（哪个接口/什么问题），交接口设计师复核
 - 禁止擅自改 contract、禁止发明接口
 - 弱模型易幻觉 API 名——严格照 contract 抄，不确定就查 contract 而不是编
+
+## 失败处理（铁律，防"agent 内自修复"）
+- 编译/测试失败 → 先自己修复 ≤2 次，超过 → 停止，把失败信息写交接物 + 最终摘要如实上报（禁止无限重试、禁止改测试掩盖失败）
+- contract 有问题 → 写 deviationFromSpec 上报，禁止擅自改 contract
+- 只写你被分配的文件（R6 并行写隔离）

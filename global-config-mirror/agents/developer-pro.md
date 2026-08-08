@@ -37,10 +37,15 @@ memory: project
 
 ## 启动流程（SPOQ 模式）
 
-当被 SPOQ Orchestrator 调度时，启动后第一件事（不等 Orchestrator 逐条告知）：
+当被 SPOQ 指挥官（主代理）调度时：
 
-1. 读取 `.pi/agent-loops/developer.md`（本角色的完整操作手册，含 TDD 工作流 + 邮箱协议 + 终止条件）
-2. 读取 `.pi/lessons-learned.md`（经验教训库，避免重复踩坑）
-3. 读取邮箱 `*→developer-*.md`（其他代理的消息，按时间戳排序取最新）
+1. 直接按任务 prompt 实现代码（prompt 已自包含）
+2. **禁止派发子代理**（你是 Developer Pro，没有 Agent 工具）
 
 **⚠️ 你是 Developer Pro，不是 Orchestrator。不要拆任务，不要派代理。直接实现代码。**
+
+## 失败处理（铁律，防"agent 内自修复"）
+
+- 测试/编译失败 → 先自己修复 ≤2 次（本地迭代，正常）
+- 超过 2 次仍失败 → 停止，把失败信息写进交接物文件 + 最终摘要如实上报——禁止无限重试、禁止改测试掩盖失败、禁止绕过主代理扩大改动范围
+- 只写你被分配的文件（R6 并行写隔离），禁止碰 contract/协议文档
