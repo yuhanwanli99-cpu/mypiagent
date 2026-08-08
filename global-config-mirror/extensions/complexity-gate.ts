@@ -68,12 +68,12 @@ function callRouter(apiKey: string, taskText: string, repoCtx: string): Promise<
         content:
           `你是 Router。判断任务规模并给出执行模式。\n\n任务: "${taskText}"\n\n代码库:\n${repoCtx}\n\n` +
           `输出: <!-- SPOQ-ROUTE: SIMPLE|COMPLEX|LARGE -->\n` +
-          `<!-- EST_TASKS: 数字 -->\n<!-- REASON: 一句话 -->\n` +
+          `<!-- EST_TASKS: 数字 --><!-- EST_FILES: 数字 --><!-- REASON: 一句话 -->\n` +
           `SIMPLE: 单文件单模块无新依赖，改动 < 5 处（主代理直接干，不进流水线）\n` +
           `COMPLEX: 多模块但范围清晰（主代理生成计划 → 并行派多个 coder 实现）\n` +
           `LARGE: 深度重构/跨平台/长程依赖/接口联动（走完整 SOP 状态机）\n` +
           `LARGE 的判断标准：需要先摸清现状再定方案（重构/新架构/多端联动）才算；否则是 COMPLEX。\n` +
-          `不确定时倾向 COMPLEX。EST_TASKS 给出预估拆解出的任务数。`
+          `不确定时倾向 COMPLEX。EST_TASKS 给出预估拆解出的任务数。EST_FILES 给出预估波及的文件数（先想：要改哪些文件、新建哪些、连带影响的哪些）。`
       }],
       max_tokens: 200, temperature: 0.0,
       extra_body: { thinking: { type: "disabled" } }
@@ -94,9 +94,9 @@ function callRouter(apiKey: string, taskText: string, repoCtx: string): Promise<
   });
 }
 
-async function routeTask(cwd: string, text: string): Promise<{ mode: string; estTasks: number; reason: string }> {
+async function routeTask(cwd: string, text: string): Promise<{ mode: string; estTasks: number; estFiles: number; reason: string }> {
   const apiKey = getApiKey();
-  if (!apiKey) return { mode: "COMPLEX", estTasks: 0, reason: "no_api_key" };
+  if (!apiKey) return { mode: "LARGE", estTasks: 0, estFiles: 0, reason: "no_api_key（fail-closed：key 缺失时保守走 LARGE，阶段0 任务分解会触发人工确认）" };
 
   const repoCtx = collectRepoContext(cwd);
   // 自洽投票 3 次
@@ -116,10 +116,12 @@ async function routeTask(cwd: string, text: string): Promise<{ mode: string; est
     : "COMPLEX";
   const estMatch = results.find(r => r?.includes("EST_TASKS:"))?.match(/EST_TASKS:\s*(\d+)/i);
   const estTasks = estMatch ? parseInt(estMatch[1], 10) : 0;
+  const fileMatch = results.find(r => r?.includes("EST_FILES:"))?.match(/EST_FILES:\s*(\d+)/i);
+  const estFiles = fileMatch ? parseInt(fileMatch[1], 10) : 0;
   const reason = results.find(r => r?.includes("REASON:"))?.match(/REASON:\s*(.+?)\s*-->/i)?.[1] || "";
 
-  appendAudit(cwd, { time: new Date().toISOString(), action: "routed", mode, votes, estTasks, reason });
-  return { mode, estTasks, reason };
+  appendAudit(cwd, { time: new Date().toISOString(), action: "routed", mode, votes, estTasks, estFiles, reason });
+  return { mode, estTasks, estFiles, reason };
 }
 
 // ═══════════════════════════════════════
@@ -149,16 +151,36 @@ export default function (pi: any) {
     }
 
     // Router 分类（不落任何状态，只给主代理一个信号）
-    const { mode, estTasks, reason } = await routeTask(cwd, text);
+    const { mode, estTasks, estFiles, reason } = await routeTask(cwd, text);
 
-    if (mode === "SIMPLE") {
+    // ── 强制人工确认（UI 弹框，不是文本——文本会被主代理跳过）──
+    // AI 已自问波及文件数（estFiles），无论少或多都让用户二次确认。
+    const modeLabels: Record<string, string> = {
+      SIMPLE: "直接干（SIMPLE）——单文件小改动，主代理直接实现",
+      COMPLEX: "计划+并行 coder（COMPLEX）——摸清现状→并行派多个 developer",
+      LARGE: "完整 SOP（LARGE）——分解→契约→测试经理排班→并行TDD→收口",
+    };
+    const choices = [
+      modeLabels[mode],
+      ...Object.entries(modeLabels).filter(([k]) => k !== mode).map(([, v]) => v),
+    ];
+    const picked = await ctx.ui.select(
+      `SPOQ: 预估波及 ${estFiles || "?"} 文件 / ${estTasks || "?"} 任务，Router 判为 ${mode}${reason ? `（${reason}）` : ""}。确认执行模式？`,
+      choices,
+    );
+    // 用户取消/超时 → fail-closed：默认走最保守的 LARGE（阶段0 分解会再确认）
+    const finalMode = picked
+      ? (Object.entries(modeLabels).find(([, v]) => v === picked)?.[0] ?? "LARGE")
+      : "LARGE";
+
+    if (finalMode === "SIMPLE") {
       return { action: "transform", text: `[SPOQ] ROUTE=SIMPLE：单文件小改动，直接实现，不进流水线。项目目录: ${cwd}。\n\n${text}` };
     }
-    if (mode === "COMPLEX") {
+    if (finalMode === "COMPLEX") {
       return { action: "transform", text: `[SPOQ] ROUTE=COMPLEX（预估 ${estTasks} 任务${reason ? `，${reason}` : ""}）：多模块但范围清晰。项目目录: ${cwd}。主代理先摸清现状生成简短实现计划（分几个模块/几步），然后同一轮并行派多个 coder（developer）各自实现一块。不走完整 SOP（不需要需求分析师/架构师/抽审）。\n\n${text}` };
     }
     // LARGE：完整 SOP 状态机（五阶段）
-    return { action: "transform", text: `[SPOQ] ROUTE=LARGE（预估 ${estTasks} 任务${reason ? `，${reason}` : ""}）：深度重构/跨平台/长程依赖，走完整 SOP 状态机。项目目录: ${cwd}（子代理工作目录同此，不要 cd 走）。先读 C:/Users/Administrator/.pi/agent/spoq-templates/SOP.md 了解角色流水线，然后按 LARGE 五阶段执行：⓪任务分解（侦察员并行分片→任务清单+依赖分组→人工确认）→ ①接口契约（需求设计师→contract-{module}.md）→ ②排班（测试经理按文件配对 tester+coder+文件锁）→ ③并行 TDD（tester 先写 RED→coder 实现 GREEN）→ ④收口（整体测试+错误分级）。若预估任务数远超 10 或规模异常，按 SOP 执行清单第 8 条停下向用户确认执行模式。\n\n${text}` };
+    return { action: "transform", text: `[SPOQ] ROUTE=LARGE（预估 ${estTasks} 任务${reason ? `，${reason}` : ""}）：深度重构/跨平台/长程依赖，走完整 SOP 状态机。项目目录: ${cwd}（子代理工作目录同此，不要 cd 走）。先读 C:/Users/Administrator/.pi/agent/spoq-templates/SOP.md 了解角色流水线，然后按 LARGE 五阶段执行：⓪任务分解（侦察员并行分片→任务清单+依赖分组→人工确认）→ ①接口契约（需求设计师→contract-{module}.md）→ ②排班（测试经理按文件配对 tester+coder+文件锁）→ ③并行 TDD（tester 先写 RED→coder 实现 GREEN）→ ④收口（整体测试+错误分级）。\n\n${text}` };
   });
 
   // ── before_agent_start: 注入 SOP 剧本（主代理靠上下文记忆执行，不落盘）──
