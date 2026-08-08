@@ -26,3 +26,17 @@ pi-diagnostics-final-*.zip
 .env.*
 *.pem
 *.key
+
+# API key / 认证（隔离，绝不入库）
+auth.json
+models-store.json
+*apiKey*
+.env
+
+# spoq 运行时状态（状态机已废除，这些是历史残留）
+.pi/spoq-state.json
+.pi/subagents.json
+.pi/spoq-mailbox/
+.pi/spoq-telemetry.jsonl
+.pi/spoq-cost.jsonl
+global-config-mirror/models-store.json
