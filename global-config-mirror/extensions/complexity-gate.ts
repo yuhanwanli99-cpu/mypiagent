@@ -130,6 +130,11 @@ async function routeTask(cwd: string, text: string): Promise<{ mode: string; est
 
 export default function (pi: any) {
 
+  // ── 会话内已确认机制（内存变量，不落盘）──
+  // 每次 pi 进程启动 = 新会话 = 自动重置。第一次任务确认后记住；
+  // 后续任务 Router 评估若与已确认机制不同（变档）→ 才二次确认；同档不弹。
+  let sessionMode: string | null = null;
+
   // ── input: 统一入口——Router 分类，transform 给主代理明确信号 ──
   pi.on("input", async (event: any, ctx: any) => {
     const cwd = ctx.cwd ?? process.cwd();
@@ -153,25 +158,33 @@ export default function (pi: any) {
     // Router 分类（不落任何状态，只给主代理一个信号）
     const { mode, estTasks, estFiles, reason } = await routeTask(cwd, text);
 
-    // ── 强制人工确认（UI 弹框，不是文本——文本会被主代理跳过）──
-    // AI 已自问波及文件数（estFiles），无论少或多都让用户二次确认。
-    const modeLabels: Record<string, string> = {
-      SIMPLE: "直接干（SIMPLE）——单文件小改动，主代理直接实现",
-      COMPLEX: "计划+并行 coder（COMPLEX）——摸清现状→并行派多个 developer",
-      LARGE: "完整 SOP（LARGE）——分解→契约→测试经理排班→并行TDD→收口",
-    };
-    const choices = [
-      modeLabels[mode],
-      ...Object.entries(modeLabels).filter(([k]) => k !== mode).map(([, v]) => v),
-    ];
-    const picked = await ctx.ui.select(
-      `SPOQ: 预估波及 ${estFiles || "?"} 文件 / ${estTasks || "?"} 任务，Router 判为 ${mode}${reason ? `（${reason}）` : ""}。确认执行模式？`,
-      choices,
-    );
-    // 用户取消/超时 → fail-closed：默认走最保守的 LARGE（阶段0 分解会再确认）
-    const finalMode = picked
-      ? (Object.entries(modeLabels).find(([, v]) => v === picked)?.[0] ?? "LARGE")
-      : "LARGE";
+    // ── 人工确认（UI 弹框，不是文本——文本会被主代理跳过）──
+    // 前提：AI 自认为这次任务与【会话内已确认机制】不同（变档）时才弹。
+    //  - 第一次任务：必弹（确立机制）
+    //  - 后续任务：Router 评估出的档位与 sessionMode 相同 → 不弹直接干；不同 → 弹框二次确认
+    //  - 少（SIMPLE 档）或多（LARGE 档）都是"与已确认机制不同"的情况，都会弹。
+    const needsConfirm = sessionMode === null || sessionMode !== mode;
+    let finalMode = mode;
+    if (needsConfirm) {
+      const modeLabels: Record<string, string> = {
+        SIMPLE: "直接干（SIMPLE）——单文件小改动，主代理直接实现",
+        COMPLEX: "计划+并行 coder（COMPLEX）——摸清现状→并行派多个 developer",
+        LARGE: "完整 SOP（LARGE）——分解→契约→测试经理排班→并行TDD→收口",
+      };
+      const choices = [
+        modeLabels[mode],
+        ...Object.entries(modeLabels).filter(([k]) => k !== mode).map(([, v]) => v),
+      ];
+      const prompt = sessionMode === null
+        ? `SPOQ: 预估波及 ${estFiles || "?"} 文件 / ${estTasks || "?"} 任务，Router 判为 ${mode}${reason ? `（${reason}）` : ""}。确认执行模式？`
+        : `SPOQ: 本次任务 Router 评估为 ${mode}（预估 ${estFiles || "?"} 文件），与本会话已确认的 ${sessionMode} 模式不同。切换确认？`;
+      const picked = await ctx.ui.select(prompt, choices);
+      // 用户取消/超时 → fail-closed：默认走最保守的 LARGE（阶段0 分解会再确认）
+      finalMode = picked
+        ? (Object.entries(modeLabels).find(([, v]) => v === picked)?.[0] ?? "LARGE")
+        : "LARGE";
+      sessionMode = finalMode;
+    }
 
     if (finalMode === "SIMPLE") {
       return { action: "transform", text: `[SPOQ] ROUTE=SIMPLE：单文件小改动，直接实现，不进流水线。项目目录: ${cwd}。\n\n${text}` };
