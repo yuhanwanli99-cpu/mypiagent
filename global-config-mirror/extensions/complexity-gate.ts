@@ -131,8 +131,9 @@ async function routeTask(cwd: string, text: string): Promise<{ mode: string; est
 export default function (pi: any) {
 
   // ── 会话内已确认机制（内存变量，不落盘）──
-  // 每次 pi 进程启动 = 新会话 = 自动重置。第一次任务确认后记住；
-  // 后续任务 Router 评估若与已确认机制不同（变档）→ 才二次确认；同档不弹。
+  // 每次 pi 进程启动 = 新会话 = 自动重置。
+  // 注意：档位（SIMPLE/COMPLEX/LARGE）由 AI 自己判断，不需要用户选——
+  // 用户唯一的确认点是：干活前"是否开干"（见 input 事件 + 注入纪律）。
   let sessionMode: string | null = null;
 
   // ── input: 统一入口——Router 分类，transform 给主代理明确信号 ──
@@ -156,44 +157,22 @@ export default function (pi: any) {
     }
 
     // Router 分类（不落任何状态，只给主代理一个信号）
+    // 档位由 AI 自己判断（用户只输入意图，不需要选档位）
     const { mode, estTasks, estFiles, reason } = await routeTask(cwd, text);
+    sessionMode = mode; // 记住 AI 判断的档位（仅用于参考/日志）
 
-    // ── 人工确认（UI 弹框，不是文本——文本会被主代理跳过）──
-    // 前提：AI 自认为这次任务与【会话内已确认机制】不同（变档）时才弹。
-    //  - 第一次任务：必弹（确立机制）
-    //  - 后续任务：Router 评估出的档位与 sessionMode 相同 → 不弹直接干；不同 → 弹框二次确认
-    //  - 少（SIMPLE 档）或多（LARGE 档）都是"与已确认机制不同"的情况，都会弹。
-    const needsConfirm = sessionMode === null || sessionMode !== mode;
-    let finalMode = mode;
-    if (needsConfirm) {
-      const modeLabels: Record<string, string> = {
-        SIMPLE: "直接干（SIMPLE）——单文件小改动，主代理直接实现",
-        COMPLEX: "计划+并行 coder（COMPLEX）——摸清现状→并行派多个 developer",
-        LARGE: "完整 SOP（LARGE）——分解→契约→测试经理排班→并行TDD→收口",
-      };
-      const choices = [
-        modeLabels[mode],
-        ...Object.entries(modeLabels).filter(([k]) => k !== mode).map(([, v]) => v),
-      ];
-      const prompt = sessionMode === null
-        ? `SPOQ: 预估波及 ${estFiles || "?"} 文件 / ${estTasks || "?"} 任务，Router 判为 ${mode}${reason ? `（${reason}）` : ""}。确认执行模式？`
-        : `SPOQ: 本次任务 Router 评估为 ${mode}（预估 ${estFiles || "?"} 文件），与本会话已确认的 ${sessionMode} 模式不同。切换确认？`;
-      const picked = await ctx.ui.select(prompt, choices);
-      // 用户取消/超时 → fail-closed：默认走最保守的 LARGE（阶段0 分解会再确认）
-      finalMode = picked
-        ? (Object.entries(modeLabels).find(([, v]) => v === picked)?.[0] ?? "LARGE")
-        : "LARGE";
-      sessionMode = finalMode;
-    }
+    // ── 不再弹档位选择框（用户不选档位，AI 自己定）──
+    // 用户唯一的人工确认 = 干活前"是否开干"，由主代理在探索+微计划后停下问，
+    // 确认词（确认/继续/ok/好等）直接放行回主代理上下文消费。
 
-    if (finalMode === "SIMPLE") {
-      return { action: "transform", text: `[SPOQ] ROUTE=SIMPLE：单文件小改动，直接实现，不进流水线。项目目录: ${cwd}。\n\n${text}` };
+    if (mode === "SIMPLE") {
+      return { action: "transform", text: `[SPOQ] ROUTE=SIMPLE（AI 自判：预估波及 ${estFiles || "?"} 文件${reason ? `，${reason}` : ""}）：单文件小改动。项目目录: ${cwd}。执行前先看一眼目标文件/依赖是否真的存在（探索后自检），然后向用户展示简短计划并问"是否开干"，用户确认后再动手；若探索发现规模远超预期（如项目根本没有目标功能），停下向用户说明并让其重新裁定。\n\n${text}` };
     }
-    if (finalMode === "COMPLEX") {
-      return { action: "transform", text: `[SPOQ] ROUTE=COMPLEX（预估 ${estTasks} 任务${reason ? `，${reason}` : ""}）：多模块但范围清晰。项目目录: ${cwd}。主代理先摸清现状生成简短实现计划（分几个模块/几步），然后同一轮并行派多个 coder（developer）各自实现一块。不走完整 SOP（不需要需求分析师/架构师/抽审）。\n\n${text}` };
+    if (mode === "COMPLEX") {
+      return { action: "transform", text: `[SPOQ] ROUTE=COMPLEX（AI 自判：预估 ${estTasks} 任务 / ${estFiles || "?"} 文件${reason ? `，${reason}` : ""}）：多模块但范围清晰。项目目录: ${cwd}。流程：①探索摸清现状（探索后自检：实际范围与预估相符？不符→停下让用户重新裁定）②生成简短实现计划（分几个模块/几步）③【停下向用户展示微计划并问"是否开干"】④用户确认后同一轮并行派多个 coder（developer）各自实现一块 ⑤汇总交付。不走完整 SOP（不需要需求分析师/架构师/抽审）。\n\n${text}` };
     }
     // LARGE：完整 SOP 状态机（五阶段）
-    return { action: "transform", text: `[SPOQ] ROUTE=LARGE（预估 ${estTasks} 任务${reason ? `，${reason}` : ""}）：深度重构/跨平台/长程依赖，走完整 SOP 状态机。项目目录: ${cwd}（子代理工作目录同此，不要 cd 走）。先读 C:/Users/Administrator/.pi/agent/spoq-templates/SOP.md 了解角色流水线，然后按 LARGE 五阶段执行：⓪任务分解（侦察员并行分片→任务清单+依赖分组→人工确认）→ ①接口契约（需求设计师→contract-{module}.md）→ ②排班（测试经理按文件配对 tester+coder+文件锁）→ ③并行 TDD（tester 先写 RED→coder 实现 GREEN）→ ④收口（整体测试+错误分级）。\n\n${text}` };
+    return { action: "transform", text: `[SPOQ] ROUTE=LARGE（AI 自判：预估 ${estTasks} 任务 / ${estFiles || "?"} 文件${reason ? `，${reason}` : ""}）：深度重构/跨平台/长程依赖，走完整 SOP 状态机。项目目录: ${cwd}（子代理工作目录同此，不要 cd 走）。先读 C:/Users/Administrator/.pi/agent/spoq-templates/SOP.md 了解角色流水线，然后按 LARGE 五阶段执行：⓪任务分解（侦察员并行分片→任务清单+依赖分组→人工确认）→ ①接口契约（需求设计师→contract-{module}.md）→ ②排班（测试经理按文件配对 tester+coder+文件锁）→ ③并行 TDD（tester 先写 RED→coder 实现 GREEN）→ ④收口（整体测试+错误分级）。其中"⓪任务分解后的人工确认"就是"是否开干"确认点。\n\n${text}` };
   });
 
   // ── before_agent_start: 注入 SOP 剧本（主代理靠上下文记忆执行，不落盘）──
@@ -221,14 +200,13 @@ export default function (pi: any) {
         `\n- 每轮先回顾自己的对话上下文：当前进行到哪一步、已产出哪些交接物、下一步该派谁。` +
         `\n- 派发子代理用 Agent 工具（run_in_background=true），子代理是手脚，派发后不阻塞等待，继续推进或等其完成事件。` +
         `\n- 子代理的工作目录是 ${cwd}，prompt 里直接给绝对路径，不要让子代理自己找项目。` +
-        `\n【探索后自检——二次确认的核心时机（强制）】` +
-        `\n    任何模式（SIMPLE/COMPLEX/LARGE）在开始实现前都必须先摸清现状（SIMPLE 也至少看一眼目标文件/依赖是否存在），然后自问：` +
-        `\n    "实际改动范围与 ROUTE 标签/已确认档位相符吗？"——具体检查：` +
-        `\n    a) 目标功能/依赖是否已存在（例：任务说"实现 live2d 眨眼"但项目根本没有 live2d 组件）` +
-        `\n    b) 实际要改的文件数、是否要新建模块/选架构/配测试，远超标签预估` +
-        `\n    c) 是否需要跨端/跨语言（标签没提到但实际要碰）` +
-        `\n    相符 → 继续按档位执行。不符（探索结果与初判断相反）→ 【停下，向用户展示探索发现 + 建议的新档位，让用户重新裁定】。` +
-        `\n    禁止：探索后发现规模远超标签仍自行继续；禁止把"探索发现需求不存在"当小事跳过。` +
+        `\n【探索后自检 + 是否开干确认（强制）】` +
+        `\n    用户只输入意图，档位由你（Router 已判）决定。开工前必须：` +
+        `\n    ① 探索/摸清现状（SIMPLE 也至少看一眼目标文件/依赖是否存在）` +
+        `\n    ② 自问"实际改动范围与 ROUTE 档位相符吗？"——检查：目标功能/依赖是否已存在（例：任务说"实现 live2d 眨眼"但项目根本没有 live2d）、实际要改文件数/新建模块/选架构/配测试是否远超预估、是否要跨端` +
+        `\n    ③ 相符 → 生成简短微计划（改哪些文件/新建什么/怎么验证）→ 【停下，向用户展示微计划并问"是否开干"】，用户确认后再动手` +
+        `\n    ④ 不符（探索结果与初判断相反）→ 【停下，向用户展示探索发现 + 建议的新档位，让用户重新裁定】` +
+        `\n    禁止：探索后发现规模远超档位仍自行继续；禁止跳过"是否开干"直接动手。` +
         `\n- LARGE 阶段0：派多个侦察员（flash，并行）按模块分片摸现状，各写 recon-{模块}.md，主代理汇合出任务分解清单+依赖分组，停下人工确认。` +
         `\n- LARGE 阶段2：测试经理排班（文件→tester+coder 配对，文件锁双向隔离：coder 禁读 tests/、tester 禁读 src/），依赖分组摘要上报你（紧凑版），文件评估留测试经理。` +
         `\n- LARGE 阶段3：tester 先写测试（RED）→ coder 实现（GREEN）；失败信息经测试经理脱敏转发（不报测试源码）；未完成依赖用契约测试/stub；同一行为点 ≥3 次 RED 不过上报你升级。` +
