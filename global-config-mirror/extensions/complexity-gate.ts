@@ -1,13 +1,13 @@
-// complexity-gate.ts v7 — 翻译器扩展（Router 预分类已废除）
-// 废除原因（实测）：flash×3 复杂度预分类在真实任务上灾难性误判（纯调研任务判成"跨平台深度重构"），
-// 且每次提交都被拦截注入 ROUTE 标签卡流程。复杂度判断交给主代理探索后自己做（探索后的实际判断，不是预猜）。
+// complexity-gate.ts v7 — 翻译器扩展（路由已彻底废除）
+// 废除原因（实测）：flash×3 复杂度预分类灾难性误判（纯调研任务判成"跨平台深度重构"），
+// 且每次提交被拦截注入 ROUTE 标签卡流程；确认词/单字母放行是路由的残留功能（防死循环用），一并废除。
+// 复杂度判断交给主代理探索后自己做（探索后的实际判断，不是预猜）。
 //
-// 本扩展只做三件事：
-// 1) 确认词/单字母 → 直接放行（不拦截，主代理消费）
-// 2) 决策点翻译层（可选）：用户输入意图后，检测【需求→工程】决策点（技术栈/模型/方案岔路），
+// 本扩展只做两件事：
+// 1) 决策点翻译层（可选）：用户输入意图后，检测【需求→工程】决策点（技术栈/模型/方案岔路），
 //    翻译成非工程语言+选项+利弊 → ctx.ui.select 弹框让用户取舍 → 选择并入任务描述。
 //    这是"用户补充 + 工程约束锁死复杂度"的机制，不判档位。
-// 3) 把 SOP.md 剧本注入主代理 system prompt（主代理自己探索、自己判断复杂度、问"是否开干"）
+// 2) 把 SOP.md 剧本注入主代理 system prompt（主代理自己探索、自己判断复杂度、问"是否开干"）
 // 部署: ~/.pi/agent/extensions/complexity-gate.ts
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -145,15 +145,9 @@ export default function (pi: any) {
     if (text.startsWith("/impl")) text = text.replace(/^\/impl\s*/, "").trim();
     if (!text) return { action: "continue" };
 
-    // ── 确认词/单字母 → 直接放行（不拦截，主代理消费）──
-    const confirmWords = ["确认", "继续", "直接做", "ok", "yes", "行", "好", "同意", "可以"];
-    const singleLetter = /^[ABC][。.\s]*$/i.test(text);
-    if (confirmWords.includes(text.toLowerCase().trim()) || singleLetter) {
-      return { action: "continue" }; // 原样放行
-    }
-
-    // ── 决策点翻译层（可选，用户取舍锁死需求；不判复杂度档位）──
+    // ── 决策点翻译层（唯一保留的功能；不判档位、不拦截输入）──
     // 复杂度由主代理探索后自己判断，本扩展不做预分类。
+    // 确认词/单字母无需特殊处理：本扩展不 transform 拦截，无决策点时原样返回（等同 continue）。
     let decisionText = "";
     try {
       const decisions = await detectDecisions(cwd, text);
